@@ -3,13 +3,5 @@ services:
     name: nifty-daily-pivot-bot
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python bot.py
-    autoDeploy: true
-
-    envVars:
-      - key: BOT_TOKEN
-        sync: false
-
-      - key: GROUP_ID
-        sync: false
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python bot.py"
