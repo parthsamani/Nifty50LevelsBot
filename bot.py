@@ -1,73 +1,63 @@
-import yfinance as yf
-from datetime import datetime
-import pytz
+import os
+import logging
+from flask import Flask
+from apscheduler.schedulers.background import BackgroundScheduler
+from pytz import timezone
 
 # ==========================
-# NIFTY SYMBOL
+# CONFIG
 # ==========================
 
-SYMBOL = "^NSEI"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+GROUP_ID = os.getenv("GROUP_ID")
+
+IST = timezone("Asia/Kolkata")
 
 # ==========================
-# DOWNLOAD DATA
+# LOGGING
 # ==========================
 
-def get_previous_day_ohlc():
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
 
-    df = yf.download(
-        SYMBOL,
-        period="5d",
-        interval="1d",
-        progress=False,
-        auto_adjust=False,
-    )
-
-    if len(df) < 2:
-        raise Exception("Not enough data")
-
-    prev = df.iloc[-2]
-
-    return (
-        float(prev["Open"]),
-        float(prev["High"]),
-        float(prev["Low"]),
-        float(prev["Close"]),
-    )
+logger = logging.getLogger("PivotBot")
 
 # ==========================
-# WOODIE PIVOT
+# FLASK
 # ==========================
 
-def woodie_pivot(open_, high, low, close):
+app = Flask(__name__)
 
-    pivot = (high + low + 2 * close) / 4
+@app.route("/")
+def home():
+    return "✅ NIFTY Woodie Pivot Bot Running"
 
-    r1 = (2 * pivot) - low
-    s1 = (2 * pivot) - high
+# ==========================
+# SCHEDULER
+# ==========================
 
-    r2 = pivot + (high - low)
-    s2 = pivot - (high - low)
+scheduler = BackgroundScheduler(timezone=IST)
 
-    r3 = high + 2 * (pivot - low)
-    s3 = low - 2 * (high - pivot)
+def test_job():
+    logger.info("Scheduler is working successfully.")
 
-    return {
-        "Pivot": round(pivot, 2),
-        "R1": round(r1, 2),
-        "R2": round(r2, 2),
-        "R3": round(r3, 2),
-        "S1": round(s1, 2),
-        "S2": round(s2, 2),
-        "S3": round(s3, 2),
-    }
+scheduler.add_job(
+    test_job,
+    trigger="interval",
+    minutes=1,
+)
+
+scheduler.start()
 
 # ==========================
 # MAIN
 # ==========================
 
-def main():
+if __name__ == "__main__":
 
-    ist = pytz.timezone("Asia/Kolkata")
+    port = int(os.environ.get("PORT", 10000))
 
-    print("=" * 50)
-    print("ParthTraderAlerts - NIFTY Woodie Pivot
+    logger.info("Starting Pivot Bot...")
+   
