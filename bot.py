@@ -1,403 +1,160 @@
-import os
-import logging
+import os, asyncio, yfinance as yf, pandas as pd, csv
+from datetime import datetime
 from flask import Flask
-from apscheduler.schedulers.background import BackgroundScheduler
-from pytz import timezone
-
-# ==========================
-# CONFIG
-# ==========================
+from threading import Thread
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from io import BytesIO
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = os.getenv("GROUP_ID")
-
-IST = timezone("Asia/Kolkata")
-
-# ==========================
-# LOGGING
-# ==========================
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
-
-logger = logging.getLogger("PivotBot")
-
-# ==========================
-# FLASK
-# ==========================
-
+PORT = int(os.getenv("PORT", 10000))
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "✅ NIFTY Woodie Pivot Bot Running"
+FNO = ["RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","TCS.NS","INFY.NS","LT.NS","ITC.NS","BHARTIARTL.NS","BAJFINANCE.NS","MARUTI.NS","M&M.NS","TATAMOTORS.NS","SUNPHARMA.NS","HCLTECH.NS","WIPRO.NS","ADANIENT.NS","ADANIPOWER.NS","ADANIPORTS.NS","TATAPOWER.NS","TATASTEEL.NS","JSWSTEEL.NS","ZOMATO.NS","JIOFIN.NS","HYUNDAI.NS","TATAPOWER.NS"]
 
-# ==========================
-# SCHEDULER
-# ==========================
+user_settings = {}
+trade_log = [] # daily log
+def get_settings(chat_id):
+    return user_settings.get(chat_id, {"near": 0.6, "move": 1.0, "sl": 0.5, "target_ratio": 2})
 
-scheduler = BackgroundScheduler(timezone=IST)
+application = Application.builder().token(BOT_TOKEN).build()
 
-def test_job():
-    logger.info("Scheduler is working successfully.")
+def get_fno_alerts(chat_id, save_log=True):
+    cfg = get_settings(chat_id)
+    alerts = []
+    for sym in FNO:
+        try:
+            df_daily = yf.download(sym, period="5d", interval="1d", progress=False, auto_adjust=True)
+            df_intra = yf.download(sym, period="1d", interval="5m", progress=False, auto_adjust=True)
+            if len(df_daily) < 2 or len(df_intra) < 2: continue
+            prev_close = float(df_daily['Close'].iloc[-2])
+            today_open = float(df_daily['Open'].iloc[-1])
+            curr_price = float(df_intra['Close'].iloc[-1])
 
-scheduler.add_job(
-    test_job,
-    trigger="interval",
-    minutes=1,
-)
+            near_cond = abs(today_open - prev_close) / prev_close * 100 <= cfg["near"]
+            if not near_cond: continue
+            move_pct = (curr_price - today_open) / today_open * 100
+            if abs(move_pct) < cfg["move"]: continue
 
-scheduler.start()
+            is_up = move_pct > 0
+            sl_price = today_open * (1 - cfg["sl"]/100) if is_up else today_open * (1 + cfg["sl"]/100)
+            target_price = curr_price + (curr_price - sl_price) * cfg["target_ratio"] if is_up else curr_price - (sl_price - curr_price) * cfg["target_ratio"]
+            rr = cfg["target_ratio"]
 
-# ==========================
-# MAIN
-# ==========================
+            symbol = sym.replace('.NS','')
+            side = "🟢 LONG" if is_up else "🔴 SHORT"
+
+            text = (
+                f"{side} **{symbol}**\n"
+                f"Entry: ₹{curr_price:.2f} ({move_pct:+.2f}%)\n"
+                f"Prev: {prev_close:.2f} | Open: {today_open:.2f}\n"
+                f"SL: ₹{sl_price:.2f} ({cfg['sl']}%) | TGT: ₹{target_price:.2f} (1:{rr})\n"
+                f"Time: {datetime.now().strftime('%I:%M %p')}"
+            )
+            alerts.append(text)
+
+            if save_log:
+                trade_log.append({
+                    "time": datetime.now().strftime('%Y-%m-%d %H:%M'),
+                    "symbol": symbol,
+                    "side": "LONG" if is_up else "SHORT",
+                    "entry": curr_price,
+                    "prev_close": prev_close,
+                    "open": today_open,
+                    "move%": round(move_pct,2),
+                    "sl": round(sl_price,2),
+                    "target": round(target_price,2),
+                    "rr": f"1:{rr}",
+                    "chat_id": chat_id
+                })
+        except: continue
+    return alerts
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🚀 **PDC + SL/TGT Bot**\n/scan\n/settings\n/auto\n/export - aaj ka excel\n/stop")
+
+async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔍 Scanning F&O...")
+    alerts = get_fno_alerts(update.effective_chat.id)
+    if not alerts:
+        await update.message.reply_text("No breakout now.")
+    else:
+        for a in alerts[:10]: # 10-10 karke bhejo taki flood na ho
+            await update.message.reply_text(a, parse_mode="Markdown")
+            await asyncio.sleep(0.5)
+
+async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cfg = get_settings(update.effective_chat.id)
+    kb = [
+        [InlineKeyboardButton(f"Near {cfg['near']}%", callback_data="noop"), InlineKeyboardButton(f"Move {cfg['move']}%", callback_data="noop")],
+        [InlineKeyboardButton("Near 0.3%", callback_data="near_0.3"), InlineKeyboardButton("Near 0.6%", callback_data="near_0.6"), InlineKeyboardButton("Near 1%", callback_data="near_1.0")],
+        [InlineKeyboardButton("Move 0.5%", callback_data="move_0.5"), InlineKeyboardButton("Move 1%", callback_data="move_1.0"), InlineKeyboardButton("Move 2%", callback_data="move_2.0")],
+        [InlineKeyboardButton(f"SL {cfg['sl']}%", callback_data="noop"), InlineKeyboardButton(f"TGT 1:{cfg['target_ratio']}", callback_data="noop")],
+        [InlineKeyboardButton("SL 0.3%", callback_data="sl_0.3"), InlineKeyboardButton("SL 0.5%", callback_data="sl_0.5"), InlineKeyboardButton("SL 1%", callback_data="sl_1.0")],
+        [InlineKeyboardButton("TGT 1:1", callback_data="tgt_1"), InlineKeyboardButton("TGT 1:2", callback_data="tgt_2"), InlineKeyboardButton("TGT 1:3", callback_data="tgt_3")],
+    ]
+    await update.message.reply_text(f"⚙️ Settings\nNear={cfg['near']}% Move={cfg['move']}% SL={cfg['sl']}% TGT=1:{cfg['target_ratio']}", reply_markup=InlineKeyboardMarkup(kb))
+
+async def button_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    cfg = get_settings(q.message.chat_id)
+    d = q.data
+    if d.startswith("near_"): cfg["near"] = float(d.split("_")[1])
+    if d.startswith("move_"): cfg["move"] = float(d.split("_")[1])
+    if d.startswith("sl_"): cfg["sl"] = float(d.split("_")[1])
+    if d.startswith("tgt_"): cfg["target_ratio"] = int(d.split("_")[1])
+    user_settings[q.message.chat_id] = cfg
+    await q.edit_message_text(f"✅ Saved Near={cfg['near']}% Move={cfg['move']}% SL={cfg['sl']}% TGT=1:{cfg['target_ratio']}\n/scan karo", reply_markup=q.message.reply_markup)
+
+async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not trade_log:
+        await update.message.reply_text("Aaj koi trade log nahi hai. /scan karo")
+        return
+    df = pd.DataFrame(trade_log)
+    df_user = df[df["chat_id"]==update.effective_chat.id]
+    if df_user.empty:
+        await update.message.reply_text("Tumhara koi log nahi")
+        return
+    output = BytesIO()
+    df_user.to_excel(output, index=False)
+    output.seek(0)
+    await update.message.reply_document(document=output, filename=f"FNO_Trades_{datetime.now().strftime('%d-%b')}.xlsx", caption=f"📊 Aaj ke {len(df_user)} trades - SL/TGT ke saath")
+
+auto_users = set()
+async def auto_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    auto_users.add(update.effective_chat.id)
+    await update.message.reply_text("✅ Auto ON 9:15-12:00")
+async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    auto_users.discard(update.effective_chat.id)
+    await update.message.reply_text("🔴 Auto OFF")
+
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("scan", scan_cmd))
+application.add_handler(CommandHandler("fno", scan_cmd))
+application.add_handler(CommandHandler("settings", settings_cmd))
+application.add_handler(CommandHandler("export", export_cmd))
+application.add_handler(CommandHandler("auto", auto_cmd))
+application.add_handler(CommandHandler("stop", stop_cmd))
+application.add_handler(CallbackQueryHandler(button_cb))
+
+@app.route('/')
+def home(): return "Bot Live SL TGT"
+
+async def auto_loop():
+    while True:
+        await asyncio.sleep(300)
+        now = datetime.now()
+        if not (9 <= now.hour <= 12): continue
+        for uid in list(auto_users):
+            alerts = get_fno_alerts(uid)
+            if alerts:
+                for a in alerts[:5]:
+                    try: await application.bot.send_message(chat_id=uid, text=a, parse_mode="Markdown")
+                    except: pass
 
 if __name__ == "__main__":
-
-    port = int(os.environ.get("PORT", 10000))
-
-    logger.info("Starting Pivot Bot...")
-    # ==========================================================
-# ParthTraderAlerts Telegram Pivot Bot
-# bot.py
-# Telegram Bot Module
-# ==========================================================
-
-import logging
-from datetime import datetime
-
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes
-)
-
-from config import BOT_TOKEN, CHAT_ID, FOOTER
-from data import get_all_market_data
-
-
-# ==========================================================
-# Logging
-# ==========================================================
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
-
-
-# ==========================================================
-# Format Pivot Message
-# ==========================================================
-
-def create_pivot_message():
-
-    market_data = get_all_market_data()
-
-    if not market_data:
-
-        return """
-⚠️ ParthTraderAlerts
-
-Market data unavailable.
-
-Please try again later.
-"""
-
-
-    today = datetime.now().strftime("%d-%m-%Y")
-
-
-    message = f"""
-📊 <b>ParthTraderAlerts</b>
-
-🗓 Date : {today}
-⏰ Time : 09:15 AM IST
-
-━━━━━━━━━━━━━━
-"""
-
-
-    for name, data in market_data.items():
-
-
-        pivot = data["pivot"]
-
-        cpr = data["cpr"]
-
-
-        bias_icon = "🟢" if data["bias"] == "Bullish" else "🔴"
-
-
-        message += f"""
-
-<b>📈 {name}</b>
-
-Previous Close : {data['close']}
-
-<b>Pivot Levels</b>
-
-🟡 Pivot : {pivot['Pivot']}
-
-🟢 R1 : {pivot['R1']}
-🟢 R2 : {pivot['R2']}
-🟢 R3 : {pivot['R3']}
-
-🔴 S1 : {pivot['S1']}
-🔴 S2 : {pivot['S2']}
-🔴 S3 : {pivot['S3']}
-
-
-<b>CPR</b>
-
-TC : {cpr['TC']}
-BC : {cpr['BC']}
-
-
-{bias_icon} Bias : {data['bias']}
-
-━━━━━━━━━━━━━━
-"""
-
-
-    message += f"""
-
-🚀 Trade With Discipline
-
-{FOOTER}
-"""
-
-
-    return message
-
-
-
-# ==========================================================
-# Send Telegram Message
-# ==========================================================
-
-async def send_pivot_message(context):
-
-    try:
-
-        message = create_pivot_message()
-
-
-        await context.bot.send_message(
-            chat_id=CHAT_ID,
-            text=message,
-            parse_mode="HTML"
-        )
-
-
-        logging.info("Pivot message sent successfully")
-
-
-    except Exception as e:
-
-        logging.error(
-            f"Telegram Send Error : {e}"
-        )
-
-
-
-# ==========================================================
-# Manual /pivot Command
-# ==========================================================
-
-async def pivot_command(
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE
-):
-
-    message = create_pivot_message()
-
-
-    await update.message.reply_text(
-        message,
-        parse_mode="HTML"
-    )
-    # ==========================================================
-# Telegram Commands
-# ==========================================================
-
-
-async def start_command(
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE
-):
-
-    text = """
-🤖 <b>ParthTraderAlerts Pivot Bot</b>
-
-✅ Bot is Active
-
-Available Commands:
-
-/pivot
-➡️ Get Today's Pivot Levels
-
-/help
-➡️ Show Bot Commands
-
-━━━━━━━━━━━━━━
-
-Daily Automatic Pivot Update:
-⏰ 09:15 AM IST
-
-📊 NIFTY 50
-🏦 BANKNIFTY
-📈 SENSEX
-
-🚀 Trade Smart
-"""
-
-    await update.message.reply_text(
-        text,
-        parse_mode="HTML"
-    )
-
-
-
-async def help_command(
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE
-):
-
-    text = """
-<b>📌 ParthTraderAlerts Commands</b>
-
-
-/start
-➡️ Start Bot
-
-
-/pivot
-➡️ Current Pivot Levels
-
-
-/help
-➡️ Help Menu
-
-
-━━━━━━━━━━━━━━
-
-Daily Auto Update:
-⏰ 09:15 AM IST
-
-Powered by:
-ParthTraderAlerts
-"""
-
-    await update.message.reply_text(
-        text,
-        parse_mode="HTML"
-    )
-
-
-
-# ==========================================================
-# Bot Setup
-# ==========================================================
-
-
-def main():
-
-    print("Starting ParthTraderAlerts Bot...")
-
-
-   app = (
-    Application
-    .builder()
-    .token(BOT_TOKEN)
-    .build()
-)
-
-setup_scheduler(app)
-
-
-    # Commands
-
-    app.add_handler(
-        CommandHandler(
-            "start",
-            start_command
-        )
-    )
-
-
-    app.add_handler(
-        CommandHandler(
-            "pivot",
-            pivot_command
-        )
-    )
-
-
-    app.add_handler(
-        CommandHandler(
-            "help",
-            help_command
-        )
-    )
-
-
-    logging.info(
-        "ParthTraderAlerts Bot Started"
-    )
-
-
-    app.run_polling()
-
-
-
-# ==========================================================
-# Run Bot
-# ==========================================================
-
-
-if __name__ == "__main__":
-
-    main()
-    # ==========================================================
-# Auto Daily Scheduler
-# ==========================================================
-
-from datetime import time as dt_time
-from zoneinfo import ZoneInfo
-
-from config import TIMEZONE, SEND_TIME
-
-
-# ==========================================================
-# Schedule Daily Pivot Message
-# ==========================================================
-
-def setup_scheduler(app):
-
-    hour, minute = map(
-        int,
-        SEND_TIME.split(":")
-    )
-
-
-    app.job_queue.run_daily(
-        send_pivot_message,
-        time=dt_time(
-            hour=hour,
-            minute=minute,
-            tzinfo=ZoneInfo(TIMEZONE)
-        ),
-        name="Daily_Pivot_Update"
-    )
-
-
-    logging.info(
-        "Daily 09:15 AM Pivot Scheduler Added"
-    )
-
-   
+    Thread(target=lambda: app.run(host='0.0.0.0', port=PORT), daemon=True).start()
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    asyncio.get_event_loop().create_task(auto_loop())
+    application.run_polling(drop_pending_updates=True)
