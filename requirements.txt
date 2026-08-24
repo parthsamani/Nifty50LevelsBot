@@ -1,6 +1,4 @@
-python-telegram-bot==22.3
-Flask==2.3.3
 yfinance==0.2.44
+curl_cffi
 pandas
-openpyxl
-lxml
+requests
