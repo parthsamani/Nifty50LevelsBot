@@ -5,15 +5,19 @@ from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from io import BytesIO
+from curl_cffi import requests as cffi_requests
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
 app = Flask(__name__)
 
-FNO = ["RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","TCS.NS","INFY.NS","LT.NS","ITC.NS","BHARTIARTL.NS","BAJFINANCE.NS","MARUTI.NS","M&M.NS","TATAMOTORS.NS","SUNPHARMA.NS","HCLTECH.NS","WIPRO.NS","ADANIENT.NS","ADANIPOWER.NS","ADANIPORTS.NS","TATAPOWER.NS","TATASTEEL.NS","JSWSTEEL.NS","ZOMATO.NS","JIOFIN.NS","HYUNDAI.NS","TATAPOWER.NS"]
+# Yahoo block fix
+session = cffi_requests.Session(impersonate="chrome")
+
+FNO = ["RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","TCS.NS","INFY.NS","LT.NS","ITC.NS","BHARTIARTL.NS","BAJFINANCE.NS","MARUTI.NS","M&M.NS","TATAMOTORS.NS","SUNPHARMA.NS","HCLTECH.NS","WIPRO.NS","ADANIENT.NS","ADANIPOWER.NS","ADANIPORTS.NS","TATAPOWER.NS","TATASTEEL.NS","JSWSTEEL.NS","ZOMATO.NS","JIOFIN.NS","HYUNDAI.NS"]
 
 user_settings = {}
-trade_log = [] # daily log
+trade_log = []
 def get_settings(chat_id):
     return user_settings.get(chat_id, {"near": 0.6, "move": 1.0, "sl": 0.5, "target_ratio": 2})
 
@@ -24,9 +28,18 @@ def get_fno_alerts(chat_id, save_log=True):
     alerts = []
     for sym in FNO:
         try:
-            df_daily = yf.download(sym, period="5d", interval="1d", progress=False, auto_adjust=True)
-            df_intra = yf.download(sym, period="1d", interval="5m", progress=False, auto_adjust=True)
-            if len(df_daily) < 2 or len(df_intra) < 2: continue
+            df_daily = yf.download(sym, period="5d", interval="1d", progress=False, auto_adjust=True, session=session)
+            df_intra = yf.download(sym, period="1d", interval="5m", progress=False, auto_adjust=True, session=session)
+
+            if df_daily.empty or df_intra.empty or len(df_daily) < 2 or len(df_intra) < 2:
+                continue
+
+            # MultiIndex fix
+            if isinstance(df_daily.columns, pd.MultiIndex):
+                df_daily.columns = df_daily.columns.get_level_values(0)
+            if isinstance(df_intra.columns, pd.MultiIndex):
+                df_intra.columns = df_intra.columns.get_level_values(0)
+
             prev_close = float(df_daily['Close'].iloc[-2])
             today_open = float(df_daily['Open'].iloc[-1])
             curr_price = float(df_intra['Close'].iloc[-1])
@@ -67,7 +80,9 @@ def get_fno_alerts(chat_id, save_log=True):
                     "rr": f"1:{rr}",
                     "chat_id": chat_id
                 })
-        except: continue
+        except Exception as e:
+            print(f"Error {sym}: {e}")
+            continue
     return alerts
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -79,7 +94,7 @@ async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not alerts:
         await update.message.reply_text("No breakout now.")
     else:
-        for a in alerts[:10]: # 10-10 karke bhejo taki flood na ho
+        for a in alerts[:10]:
             await update.message.reply_text(a, parse_mode="Markdown")
             await asyncio.sleep(0.5)
 
