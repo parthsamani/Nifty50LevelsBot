@@ -140,9 +140,6 @@ async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         for a in alerts[:10]:
             await update.message.reply_text(a, parse_mode="Markdown")
-            if CHANNEL_ID:
-                try: await application.bot.send_message(chat_id=int(CHANNEL_ID), text=a, parse_mode="Markdown")
-                except: pass
             await asyncio.sleep(0.3)
 
 async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
