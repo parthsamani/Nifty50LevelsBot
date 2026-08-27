@@ -10,7 +10,7 @@ import json
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0")) # Apni Telegram ID yaha env me daal dena
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 app = Flask(__name__)
 
 session = cffi_requests.Session(impersonate="chrome110")
@@ -19,7 +19,7 @@ FNO = ["RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAK
 
 user_settings = {}
 trade_log = {}
-user_tracking = {} # Tracking system
+user_tracking = {}
 
 def get_ist():
     return datetime.utcnow() + timedelta(hours=5, minutes=30)
@@ -33,7 +33,6 @@ def track_user(update: Update):
         chat = update.effective_chat
         uid = user.id
         now_str = get_ist().strftime('%d-%m-%Y %I:%M:%S %p')
-
         if uid not in user_tracking:
             user_tracking[uid] = {
                 "user_id": uid,
@@ -179,20 +178,15 @@ async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
-    # Sirf aap dekh paoge agar ADMIN_ID set kiya
     if ADMIN_ID!= 0 and update.effective_user.id!= ADMIN_ID:
         await update.message.reply_text("⛔ Ye command sirf admin ke liye hai")
         return
-
     if not user_tracking:
         await update.message.reply_text("Abhi koi user nahi hai")
         return
-
     msg = f"👥 **Total Users: {len(user_tracking)}**\nTime: {get_ist().strftime('%d-%m-%Y %I:%M %p IST')}\n\n"
     for i, (uid, data) in enumerate(user_tracking.items(), 1):
         msg += f"{i}. **{data['name']}**\n {data['username']} | ID: `{data['user_id']}`\n Last: {data['last_seen']}\n Count: {data['count']} | Type: {data['chat_type']}\n\n"
-
-    # Agar message bada ho to file me bhej do
     if len(msg) > 4000:
         df = pd.DataFrame(list(user_tracking.values()))
         output = BytesIO()
@@ -214,9 +208,8 @@ application.add_handler(CommandHandler("users", users_cmd))
 application.add_handler(CallbackQueryHandler(button_cb))
 
 @app.route('/')
-def home(): return f"Bot Live Direct API {get_ist().strftime('%H:%M IST')} | Users: {len(user_tracking)}"
-@app.route('/')
-def home(): return f"Bot Live Direct API {get_ist().strftime('%H:%M IST')} | Users: {len(user_tracking)}"
+def home():
+    return f"Bot Live Direct API {get_ist().strftime('%H:%M IST')} | Users: {len(user_tracking)}"
 
 @app.route('/users')
 def users_page():
@@ -228,7 +221,6 @@ def users_page():
     html += "</table>"
     return html
 
-async def auto_loop():
 async def auto_loop():
     while True:
         await asyncio.sleep(300)
