@@ -215,7 +215,20 @@ application.add_handler(CallbackQueryHandler(button_cb))
 
 @app.route('/')
 def home(): return f"Bot Live Direct API {get_ist().strftime('%H:%M IST')} | Users: {len(user_tracking)}"
+@app.route('/')
+def home(): return f"Bot Live Direct API {get_ist().strftime('%H:%M IST')} | Users: {len(user_tracking)}"
 
+@app.route('/users')
+def users_page():
+    if not user_tracking:
+        return "No users yet"
+    html = f"<h2>Total Users: {len(user_tracking)} - {get_ist().strftime('%d-%m-%Y %I:%M %p IST')}</h2><table border=1 cellpadding=5><tr><th>#</th><th>Name</th><th>Username</th><th>User ID</th><th>Chat Type</th><th>First Seen</th><th>Last Seen IST</th><th>Count</th></tr>"
+    for i, (uid, d) in enumerate(user_tracking.items(), 1):
+        html += f"<tr><td>{i}</td><td>{d['name']}</td><td>{d['username']}</td><td>{d['user_id']}</td><td>{d['chat_type']}</td><td>{d['first_seen']}</td><td>{d['last_seen']}</td><td>{d['count']}</td></tr>"
+    html += "</table>"
+    return html
+
+async def auto_loop():
 async def auto_loop():
     while True:
         await asyncio.sleep(300)
