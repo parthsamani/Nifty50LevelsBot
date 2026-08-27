@@ -1,5 +1,5 @@
 import os, asyncio, pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from flask import Flask
 from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -21,11 +21,18 @@ user_settings = {}
 trade_log = {}
 user_tracking = {}
 
+# --- SPAM FIX + QUALITY FILTER (NEW) ---
+alerted_today = {} # {chat_id: {symbol: '2026-08-27'}}
+last_alert_time = {} # {chat_id: {symbol: datetime}}
+COOLDOWN_MIN = 45
+TIME_START = time(9, 20)
+TIME_END = time(11, 15)
+
 def get_ist():
     return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
 def get_settings(chat_id):
-    return user_settings.get(chat_id, {"near": 1.0, "move": 0.5, "sl": 0.5, "target_ratio": 2})
+    return user_settings.get(chat_id, {"near": 0.6, "move": 1.0, "sl": 0.5, "target_ratio": 2})
 
 def track_user(update: Update):
     try:
@@ -66,7 +73,8 @@ def fetch_yahoo_data(symbol, range_str, interval):
             'Open': ohlc['open'],
             'Close': ohlc['close'],
             'High': ohlc['high'],
-            'Low': ohlc['low']
+            'Low': ohlc['low'],
+            'Volume': ohlc['volume']
         }, index=pd.to_datetime(timestamps, unit='s'))
         df.dropna(inplace=True)
         return df
@@ -80,6 +88,13 @@ def get_fno_alerts(chat_id, save_log=True, debug=False):
     cfg = get_settings(chat_id)
     alerts = []
     debug_logs = []
+
+    # Spam fix init for this chat
+    if chat_id not in alerted_today: alerted_today[chat_id] = {}
+    if chat_id not in last_alert_time: last_alert_time[chat_id] = {}
+    today_str = get_ist().strftime('%Y-%m-%d')
+    curr_ist_time = get_ist().time()
+
     for sym in FNO:
         try:
             df_daily = fetch_yahoo_data(sym, "5d", "1d")
@@ -92,17 +107,48 @@ def get_fno_alerts(chat_id, save_log=True, debug=False):
             curr_price = float(df_intra['Close'].iloc[-1])
             near_pct = abs(today_open - prev_close) / prev_close * 100
             move_pct = (curr_price - today_open) / today_open * 100
+
+            # --- QUALITY FILTER ---
+            avg_vol = float(df_daily['Volume'].iloc[-2]) if 'Volume' in df_daily else 0
+            curr_vol = float(df_daily['Volume'].iloc[-1]) if 'Volume' in df_daily else 0
+            has_low_volume = avg_vol > 0 and curr_vol < avg_vol * 0.8 # Agar aaj volume kal se 20% kam hai to skip
+
             if debug:
-                debug_logs.append(f"{sym.replace('.NS','')}: Near={near_pct:.2f}% Move={move_pct:.2f}%")
+                debug_logs.append(f"{sym.replace('.NS','')}: Near={near_pct:.2f}% Move={move_pct:.2f}% Vol={'Low' if has_low_volume else 'Ok'}")
+
             if near_pct > cfg["near"]: continue
             if abs(move_pct) < cfg["move"]: continue
+            if has_low_volume: continue
+
+            # --- SPAM FIX LOGIC ---
+            symbol = sym.replace('.NS','')
+
+            # 1. One stock = One alert per day
+            if alerted_today[chat_id].get(symbol) == today_str:
+                if debug: debug_logs.append(f"{symbol}: Already alerted today - SKIP")
+                continue
+
+            # 2. Cooldown 45 min
+            if symbol in last_alert_time[chat_id]:
+                diff = (get_ist() - last_alert_time[chat_id][symbol]).seconds / 60
+                if diff < COOLDOWN_MIN:
+                    if debug: debug_logs.append(f"{symbol}: Cooldown {diff:.0f}m - SKIP")
+                    continue
+
+            # 3. Time Window 9:20 to 11:15 only for Auto (Scan ko allow karo)
+            # Auto loop me time check pehle se hai, yaha sirf alert lock karenge
+
             is_up = move_pct > 0
             sl_price = today_open * (1 - cfg["sl"]/100) if is_up else today_open * (1 + cfg["sl"]/100)
             target_price = curr_price + (curr_price - sl_price) * cfg["target_ratio"] if is_up else curr_price - (sl_price - curr_price) * cfg["target_ratio"]
-            symbol = sym.replace('.NS','')
             side = "🟢 LONG" if is_up else "🔴 SHORT"
             text = f"{side} **{symbol}**\nEntry: ₹{curr_price:.2f} ({move_pct:+.2f}%)\nPrev: {prev_close:.2f} | Open: {today_open:.2f}\nSL: ₹{sl_price:.2f} | TGT: ₹{target_price:.2f} (1:{cfg['target_ratio']})\nTime: {get_ist().strftime('%I:%M %p IST')}"
             alerts.append(text)
+
+            # --- LOCK KARO ---
+            alerted_today[chat_id][symbol] = today_str
+            last_alert_time[chat_id][symbol] = get_ist()
+
             if save_log:
                 trade_log.setdefault(chat_id, []).append({"time": get_ist().strftime('%Y-%m-%d %H:%M'),"symbol": symbol,"side": "LONG" if is_up else "SHORT","entry": curr_price,"prev_close": prev_close,"open": today_open,"move%": round(move_pct,2),"sl": round(sl_price,2),"target": round(target_price,2),"rr": f"1:{cfg['target_ratio']}"})
         except Exception as e:
@@ -112,7 +158,7 @@ def get_fno_alerts(chat_id, save_log=True, debug=False):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
-    await update.message.reply_text(f"🚀 **PDC Bot Fixed (Yahoo Direct)**\nIST: {get_ist().strftime('%I:%M %p')}\n/scan\n/debug\n/settings")
+    await update.message.reply_text(f"🚀 **PDC Bot Fixed (No Spam + Quality)**\nIST: {get_ist().strftime('%I:%M %p')}\n/scan\n/debug\n/settings\n\nNew: 1 Stock = 1 Alert/Day | Cooldown 45m | Vol Filter")
 
 async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
@@ -169,7 +215,7 @@ auto_users = set()
 async def auto_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
     auto_users.add(update.effective_chat.id)
-    await update.message.reply_text("✅ Auto ON (9:15-15:30 IST)")
+    await update.message.reply_text("✅ Auto ON (9:15-15:30 IST) - 1 Stock 1 Alert/Day + 45m Cooldown")
 
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
@@ -234,6 +280,12 @@ async def auto_loop():
                 for a in alerts[:5]:
                     try: await application.bot.send_message(chat_id=uid, text=a, parse_mode="Markdown")
                     except: pass
+
+@app.route('/reset')
+def reset_locks():
+    alerted_today.clear()
+    last_alert_time.clear()
+    return "Reset done - All stocks unlocked for today"
 
 if __name__ == "__main__":
     Thread(target=lambda: app.run(host='0.0.0.0', port=PORT), daemon=True).start()
