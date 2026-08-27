@@ -11,8 +11,10 @@ import json
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-app = Flask(__name__)
+CHANNEL_ID = os.getenv("CHANNEL_ID") # Render se ayega
+CHANNEL_LINK = "https://t.me/ParthTraderAlertsLive"
 
+app = Flask(__name__)
 session = cffi_requests.Session(impersonate="chrome110")
 
 FNO = ["RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","TCS.NS","INFY.NS","LT.NS","ITC.NS","BHARTIARTL.NS","BAJFINANCE.NS","MARUTI.NS","M&M.NS","TATAMOTORS.NS","SUNPHARMA.NS","HCLTECH.NS","WIPRO.NS","ADANIENT.NS","ADANIPOWER.NS","ADANIPORTS.NS","TATAPOWER.NS","TATASTEEL.NS","JSWSTEEL.NS","ZOMATO.NS","JIOFIN.NS","HYUNDAI.NS"]
@@ -20,13 +22,9 @@ FNO = ["RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAK
 user_settings = {}
 trade_log = {}
 user_tracking = {}
-
-# --- SPAM FIX + QUALITY FILTER (NEW) ---
-alerted_today = {} # {chat_id: {symbol: '2026-08-27'}}
-last_alert_time = {} # {chat_id: {symbol: datetime}}
+alerted_today = {}
+last_alert_time = {}
 COOLDOWN_MIN = 45
-TIME_START = time(9, 20)
-TIME_END = time(11, 15)
 
 def get_ist():
     return datetime.utcnow() + timedelta(hours=5, minutes=30)
@@ -41,24 +39,14 @@ def track_user(update: Update):
         uid = user.id
         now_str = get_ist().strftime('%d-%m-%Y %I:%M:%S %p')
         if uid not in user_tracking:
-            user_tracking[uid] = {
-                "user_id": uid,
-                "name": user.full_name,
-                "username": f"@{user.username}" if user.username else "No username",
-                "chat_type": chat.type,
-                "chat_id": chat.id,
-                "first_seen": now_str,
-                "last_seen": now_str,
-                "count": 1
-            }
+            user_tracking[uid] = {"user_id": uid,"name": user.full_name,"username": f"@{user.username}" if user.username else "No username","chat_type": chat.type,"chat_id": chat.id,"first_seen": now_str,"last_seen": now_str,"count": 1}
         else:
             user_tracking[uid]["last_seen"] = now_str
             user_tracking[uid]["name"] = user.full_name
             user_tracking[uid]["username"] = f"@{user.username}" if user.username else "No username"
             user_tracking[uid]["count"] += 1
             user_tracking[uid]["chat_id"] = chat.id
-    except Exception as e:
-        print(f"Track error: {e}")
+    except: pass
 
 def fetch_yahoo_data(symbol, range_str, interval):
     try:
@@ -69,31 +57,29 @@ def fetch_yahoo_data(symbol, range_str, interval):
         result = data['chart']['result'][0]
         timestamps = result['timestamp']
         ohlc = result['indicators']['quote'][0]
-        df = pd.DataFrame({
-            'Open': ohlc['open'],
-            'Close': ohlc['close'],
-            'High': ohlc['high'],
-            'Low': ohlc['low'],
-            'Volume': ohlc['volume']
-        }, index=pd.to_datetime(timestamps, unit='s'))
+        df = pd.DataFrame({'Open': ohlc['open'],'Close': ohlc['close'],'High': ohlc['high'],'Low': ohlc['low'],'Volume': ohlc['volume']}, index=pd.to_datetime(timestamps, unit='s'))
         df.dropna(inplace=True)
         return df
-    except Exception as e:
-        print(f"Fetch fail {symbol}: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 application = Application.builder().token(BOT_TOKEN).build()
+
+async def is_joined_channel(user_id):
+    if not CHANNEL_ID: return True
+    try:
+        member = await application.bot.get_chat_member(chat_id=int(CHANNEL_ID), user_id=user_id)
+        return member.status in ['member', 'administrator', 'creator', 'owner']
+    except Exception as e:
+        print(f"Join check fail: {e}")
+        return True
 
 def get_fno_alerts(chat_id, save_log=True, debug=False):
     cfg = get_settings(chat_id)
     alerts = []
     debug_logs = []
-
-    # Spam fix init for this chat
     if chat_id not in alerted_today: alerted_today[chat_id] = {}
     if chat_id not in last_alert_time: last_alert_time[chat_id] = {}
     today_str = get_ist().strftime('%Y-%m-%d')
-    curr_ist_time = get_ist().time()
 
     for sym in FNO:
         try:
@@ -107,36 +93,20 @@ def get_fno_alerts(chat_id, save_log=True, debug=False):
             curr_price = float(df_intra['Close'].iloc[-1])
             near_pct = abs(today_open - prev_close) / prev_close * 100
             move_pct = (curr_price - today_open) / today_open * 100
-
-            # --- QUALITY FILTER ---
             avg_vol = float(df_daily['Volume'].iloc[-2]) if 'Volume' in df_daily else 0
             curr_vol = float(df_daily['Volume'].iloc[-1]) if 'Volume' in df_daily else 0
-            has_low_volume = avg_vol > 0 and curr_vol < avg_vol * 0.8 # Agar aaj volume kal se 20% kam hai to skip
+            has_low_volume = avg_vol > 0 and curr_vol < avg_vol * 0.8
 
-            if debug:
-                debug_logs.append(f"{sym.replace('.NS','')}: Near={near_pct:.2f}% Move={move_pct:.2f}% Vol={'Low' if has_low_volume else 'Ok'}")
-
+            if debug: debug_logs.append(f"{sym.replace('.NS','')}: Near={near_pct:.2f}% Move={move_pct:.2f}% Vol={'Low' if has_low_volume else 'Ok'}")
             if near_pct > cfg["near"]: continue
             if abs(move_pct) < cfg["move"]: continue
             if has_low_volume: continue
 
-            # --- SPAM FIX LOGIC ---
             symbol = sym.replace('.NS','')
-
-            # 1. One stock = One alert per day
-            if alerted_today[chat_id].get(symbol) == today_str:
-                if debug: debug_logs.append(f"{symbol}: Already alerted today - SKIP")
-                continue
-
-            # 2. Cooldown 45 min
+            if alerted_today[chat_id].get(symbol) == today_str: continue
             if symbol in last_alert_time[chat_id]:
                 diff = (get_ist() - last_alert_time[chat_id][symbol]).seconds / 60
-                if diff < COOLDOWN_MIN:
-                    if debug: debug_logs.append(f"{symbol}: Cooldown {diff:.0f}m - SKIP")
-                    continue
-
-            # 3. Time Window 9:20 to 11:15 only for Auto (Scan ko allow karo)
-            # Auto loop me time check pehle se hai, yaha sirf alert lock karenge
+                if diff < COOLDOWN_MIN: continue
 
             is_up = move_pct > 0
             sl_price = today_open * (1 - cfg["sl"]/100) if is_up else today_open * (1 + cfg["sl"]/100)
@@ -144,24 +114,25 @@ def get_fno_alerts(chat_id, save_log=True, debug=False):
             side = "🟢 LONG" if is_up else "🔴 SHORT"
             text = f"{side} **{symbol}**\nEntry: ₹{curr_price:.2f} ({move_pct:+.2f}%)\nPrev: {prev_close:.2f} | Open: {today_open:.2f}\nSL: ₹{sl_price:.2f} | TGT: ₹{target_price:.2f} (1:{cfg['target_ratio']})\nTime: {get_ist().strftime('%I:%M %p IST')}"
             alerts.append(text)
-
-            # --- LOCK KARO ---
             alerted_today[chat_id][symbol] = today_str
             last_alert_time[chat_id][symbol] = get_ist()
-
             if save_log:
                 trade_log.setdefault(chat_id, []).append({"time": get_ist().strftime('%Y-%m-%d %H:%M'),"symbol": symbol,"side": "LONG" if is_up else "SHORT","entry": curr_price,"prev_close": prev_close,"open": today_open,"move%": round(move_pct,2),"sl": round(sl_price,2),"target": round(target_price,2),"rr": f"1:{cfg['target_ratio']}"})
-        except Exception as e:
-            if debug: debug_logs.append(f"{sym}: Err {e}")
-            continue
+        except: continue
     return alerts, debug_logs
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
+    if not await is_joined_channel(update.effective_user.id):
+        await update.message.reply_text(f"⛔ **Channel Join Karo**\nBot use karne ke liye join karna zaruri hai\n👉 {CHANNEL_LINK}", parse_mode="Markdown")
+        return
     await update.message.reply_text(f"🚀 **PDC Bot Fixed (No Spam + Quality)**\nIST: {get_ist().strftime('%I:%M %p')}\n/scan\n/debug\n/settings\n\nNew: 1 Stock = 1 Alert/Day | Cooldown 45m | Vol Filter")
 
 async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
+    if not await is_joined_channel(update.effective_user.id):
+        await update.message.reply_text(f"⛔ **Channel Join Karo**\nBot use karne ke liye join karna zaruri hai\n👉 {CHANNEL_LINK}", parse_mode="Markdown")
+        return
     await update.message.reply_text(f"🔍 Scanning {len(FNO)} stocks... {get_ist().strftime('%I:%M %p IST')}")
     alerts, _ = get_fno_alerts(update.effective_chat.id)
     if not alerts:
@@ -169,21 +140,27 @@ async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         for a in alerts[:10]:
             await update.message.reply_text(a, parse_mode="Markdown")
+            if CHANNEL_ID:
+                try: await application.bot.send_message(chat_id=int(CHANNEL_ID), text=a, parse_mode="Markdown")
+                except: pass
             await asyncio.sleep(0.3)
 
 async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
+    if not await is_joined_channel(update.effective_user.id):
+        await update.message.reply_text(f"⛔ **Channel Join Karo**\n👉 {CHANNEL_LINK}"); return
     await update.message.reply_text("🔍 Debug scanning direct API se...")
     alerts, logs = get_fno_alerts(update.effective_chat.id, save_log=False, debug=True)
     msg = "\n".join(logs[:30])
     if not msg: msg = "All empty - Yahoo block still"
     await update.message.reply_text(f"Debug Data:\n{msg}\n\nAlerts: {len(alerts)}")
     if alerts:
-        for a in alerts[:3]:
-            await update.message.reply_text(a, parse_mode="Markdown")
+        for a in alerts[:3]: await update.message.reply_text(a, parse_mode="Markdown")
 
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
+    if not await is_joined_channel(update.effective_user.id):
+        await update.message.reply_text(f"⛔ **Channel Join Karo**\n👉 {CHANNEL_LINK}"); return
     cfg = get_settings(update.effective_chat.id)
     kb = [[InlineKeyboardButton(f"Near {cfg['near']}%", callback_data="noop"), InlineKeyboardButton(f"Move {cfg['move']}%", callback_data="noop")],[InlineKeyboardButton("Near 0.3%", callback_data="near_0.3"), InlineKeyboardButton("Near 0.6%", callback_data="near_0.6"), InlineKeyboardButton("Near 1%", callback_data="near_1.0"), InlineKeyboardButton("Near 2%", callback_data="near_2.0")],[InlineKeyboardButton("Move 0.5%", callback_data="move_0.5"), InlineKeyboardButton("Move 1%", callback_data="move_1.0"), InlineKeyboardButton("Move 2%", callback_data="move_2.0")],[InlineKeyboardButton(f"SL {cfg['sl']}%", callback_data="noop"), InlineKeyboardButton(f"TGT 1:{cfg['target_ratio']}", callback_data="noop")],[InlineKeyboardButton("SL 0.3%", callback_data="sl_0.3"), InlineKeyboardButton("SL 0.5%", callback_data="sl_0.5"), InlineKeyboardButton("SL 1%", callback_data="sl_1.0")],[InlineKeyboardButton("TGT 1:1", callback_data="tgt_1"), InlineKeyboardButton("TGT 1:2", callback_data="tgt_2"), InlineKeyboardButton("TGT 1:3", callback_data="tgt_3")],]
     await update.message.reply_text(f"⚙️ Settings Near={cfg['near']}% Move={cfg['move']}% SL={cfg['sl']}% TGT=1:{cfg['target_ratio']}", reply_markup=InlineKeyboardMarkup(kb))
@@ -214,6 +191,8 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 auto_users = set()
 async def auto_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
+    if not await is_joined_channel(update.effective_user.id):
+        await update.message.reply_text(f"⛔ **Channel Join Karo**\n👉 {CHANNEL_LINK}"); return
     auto_users.add(update.effective_chat.id)
     await update.message.reply_text("✅ Auto ON (9:15-15:30 IST) - 1 Stock 1 Alert/Day + 45m Cooldown")
 
@@ -225,19 +204,14 @@ async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
     if ADMIN_ID!= 0 and update.effective_user.id!= ADMIN_ID:
-        await update.message.reply_text("⛔ Ye command sirf admin ke liye hai")
-        return
-    if not user_tracking:
-        await update.message.reply_text("Abhi koi user nahi hai")
-        return
+        await update.message.reply_text("⛔ Ye command sirf admin ke liye hai"); return
+    if not user_tracking: await update.message.reply_text("Abhi koi user nahi hai"); return
     msg = f"👥 **Total Users: {len(user_tracking)}**\nTime: {get_ist().strftime('%d-%m-%Y %I:%M %p IST')}\n\n"
     for i, (uid, data) in enumerate(user_tracking.items(), 1):
         msg += f"{i}. **{data['name']}**\n {data['username']} | ID: `{data['user_id']}`\n Last: {data['last_seen']}\n Count: {data['count']} | Type: {data['chat_type']}\n\n"
     if len(msg) > 4000:
         df = pd.DataFrame(list(user_tracking.values()))
-        output = BytesIO()
-        df.to_excel(output, index=False)
-        output.seek(0)
+        output = BytesIO(); df.to_excel(output, index=False); output.seek(0)
         await update.message.reply_document(document=output, filename=f"Users_{get_ist().strftime('%d-%b-%Y')}.xlsx", caption=f"Total Users: {len(user_tracking)}")
     else:
         await update.message.reply_text(msg, parse_mode="Markdown")
@@ -254,18 +228,15 @@ application.add_handler(CommandHandler("users", users_cmd))
 application.add_handler(CallbackQueryHandler(button_cb))
 
 @app.route('/')
-def home():
-    return f"Bot Live Direct API {get_ist().strftime('%H:%M IST')} | Users: {len(user_tracking)}"
+def home(): return f"Bot Live Direct API {get_ist().strftime('%H:%M IST')} | Users: {len(user_tracking)}"
 
 @app.route('/users')
 def users_page():
-    if not user_tracking:
-        return "No users yet"
+    if not user_tracking: return "No users yet"
     html = f"<h2>Total Users: {len(user_tracking)} - {get_ist().strftime('%d-%m-%Y %I:%M %p IST')}</h2><table border=1 cellpadding=5><tr><th>#</th><th>Name</th><th>Username</th><th>User ID</th><th>Chat Type</th><th>First Seen</th><th>Last Seen IST</th><th>Count</th></tr>"
     for i, (uid, d) in enumerate(user_tracking.items(), 1):
         html += f"<tr><td>{i}</td><td>{d['name']}</td><td>{d['username']}</td><td>{d['user_id']}</td><td>{d['chat_type']}</td><td>{d['first_seen']}</td><td>{d['last_seen']}</td><td>{d['count']}</td></tr>"
-    html += "</table>"
-    return html
+    html += "</table>"; return html
 
 async def auto_loop():
     while True:
@@ -278,14 +249,15 @@ async def auto_loop():
             alerts, _ = get_fno_alerts(uid)
             if alerts:
                 for a in alerts[:5]:
-                    try: await application.bot.send_message(chat_id=uid, text=a, parse_mode="Markdown")
+                    try:
+                        await application.bot.send_message(chat_id=uid, text=a, parse_mode="Markdown")
+                        if CHANNEL_ID:
+                            await application.bot.send_message(chat_id=int(CHANNEL_ID), text=a, parse_mode="Markdown")
                     except: pass
 
 @app.route('/reset')
 def reset_locks():
-    alerted_today.clear()
-    last_alert_time.clear()
-    return "Reset done - All stocks unlocked for today"
+    alerted_today.clear(); last_alert_time.clear(); return "Reset done"
 
 if __name__ == "__main__":
     Thread(target=lambda: app.run(host='0.0.0.0', port=PORT), daemon=True).start()
