@@ -10,6 +10,7 @@ import json
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0")) # Apni Telegram ID yaha env me daal dena
 app = Flask(__name__)
 
 session = cffi_requests.Session(impersonate="chrome110")
@@ -18,12 +19,40 @@ FNO = ["RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAK
 
 user_settings = {}
 trade_log = {}
+user_tracking = {} # Tracking system
 
 def get_ist():
     return datetime.utcnow() + timedelta(hours=5, minutes=30)
 
 def get_settings(chat_id):
     return user_settings.get(chat_id, {"near": 1.0, "move": 0.5, "sl": 0.5, "target_ratio": 2})
+
+def track_user(update: Update):
+    try:
+        user = update.effective_user
+        chat = update.effective_chat
+        uid = user.id
+        now_str = get_ist().strftime('%d-%m-%Y %I:%M:%S %p')
+
+        if uid not in user_tracking:
+            user_tracking[uid] = {
+                "user_id": uid,
+                "name": user.full_name,
+                "username": f"@{user.username}" if user.username else "No username",
+                "chat_type": chat.type,
+                "chat_id": chat.id,
+                "first_seen": now_str,
+                "last_seen": now_str,
+                "count": 1
+            }
+        else:
+            user_tracking[uid]["last_seen"] = now_str
+            user_tracking[uid]["name"] = user.full_name
+            user_tracking[uid]["username"] = f"@{user.username}" if user.username else "No username"
+            user_tracking[uid]["count"] += 1
+            user_tracking[uid]["chat_id"] = chat.id
+    except Exception as e:
+        print(f"Track error: {e}")
 
 def fetch_yahoo_data(symbol, range_str, interval):
     try:
@@ -83,9 +112,11 @@ def get_fno_alerts(chat_id, save_log=True, debug=False):
     return alerts, debug_logs
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update)
     await update.message.reply_text(f"🚀 **PDC Bot Fixed (Yahoo Direct)**\nIST: {get_ist().strftime('%I:%M %p')}\n/scan\n/debug\n/settings")
 
 async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update)
     await update.message.reply_text(f"🔍 Scanning {len(FNO)} stocks... {get_ist().strftime('%I:%M %p IST')}")
     alerts, _ = get_fno_alerts(update.effective_chat.id)
     if not alerts:
@@ -96,6 +127,7 @@ async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(0.3)
 
 async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update)
     await update.message.reply_text("🔍 Debug scanning direct API se...")
     alerts, logs = get_fno_alerts(update.effective_chat.id, save_log=False, debug=True)
     msg = "\n".join(logs[:30])
@@ -106,11 +138,13 @@ async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(a, parse_mode="Markdown")
 
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update)
     cfg = get_settings(update.effective_chat.id)
     kb = [[InlineKeyboardButton(f"Near {cfg['near']}%", callback_data="noop"), InlineKeyboardButton(f"Move {cfg['move']}%", callback_data="noop")],[InlineKeyboardButton("Near 0.3%", callback_data="near_0.3"), InlineKeyboardButton("Near 0.6%", callback_data="near_0.6"), InlineKeyboardButton("Near 1%", callback_data="near_1.0"), InlineKeyboardButton("Near 2%", callback_data="near_2.0")],[InlineKeyboardButton("Move 0.5%", callback_data="move_0.5"), InlineKeyboardButton("Move 1%", callback_data="move_1.0"), InlineKeyboardButton("Move 2%", callback_data="move_2.0")],[InlineKeyboardButton(f"SL {cfg['sl']}%", callback_data="noop"), InlineKeyboardButton(f"TGT 1:{cfg['target_ratio']}", callback_data="noop")],[InlineKeyboardButton("SL 0.3%", callback_data="sl_0.3"), InlineKeyboardButton("SL 0.5%", callback_data="sl_0.5"), InlineKeyboardButton("SL 1%", callback_data="sl_1.0")],[InlineKeyboardButton("TGT 1:1", callback_data="tgt_1"), InlineKeyboardButton("TGT 1:2", callback_data="tgt_2"), InlineKeyboardButton("TGT 1:3", callback_data="tgt_3")],]
     await update.message.reply_text(f"⚙️ Settings Near={cfg['near']}% Move={cfg['move']}% SL={cfg['sl']}% TGT=1:{cfg['target_ratio']}", reply_markup=InlineKeyboardMarkup(kb))
 
 async def button_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update)
     q = update.callback_query
     await q.answer()
     cfg = get_settings(q.message.chat_id)
@@ -123,6 +157,7 @@ async def button_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(f"✅ Saved Near={cfg['near']}% Move={cfg['move']}% SL={cfg['sl']}% TGT=1:{cfg['target_ratio']}\n/scan karo", reply_markup=q.message.reply_markup)
 
 async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update)
     logs = trade_log.get(update.effective_chat.id, [])
     if not logs: await update.message.reply_text("Koi log nahi"); return
     df = pd.DataFrame(logs)
@@ -133,12 +168,39 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 auto_users = set()
 async def auto_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update)
     auto_users.add(update.effective_chat.id)
     await update.message.reply_text("✅ Auto ON (9:15-15:30 IST)")
 
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update)
     auto_users.discard(update.effective_chat.id)
     await update.message.reply_text("🔴 Auto OFF")
+
+async def users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    track_user(update)
+    # Sirf aap dekh paoge agar ADMIN_ID set kiya
+    if ADMIN_ID!= 0 and update.effective_user.id!= ADMIN_ID:
+        await update.message.reply_text("⛔ Ye command sirf admin ke liye hai")
+        return
+
+    if not user_tracking:
+        await update.message.reply_text("Abhi koi user nahi hai")
+        return
+
+    msg = f"👥 **Total Users: {len(user_tracking)}**\nTime: {get_ist().strftime('%d-%m-%Y %I:%M %p IST')}\n\n"
+    for i, (uid, data) in enumerate(user_tracking.items(), 1):
+        msg += f"{i}. **{data['name']}**\n {data['username']} | ID: `{data['user_id']}`\n Last: {data['last_seen']}\n Count: {data['count']} | Type: {data['chat_type']}\n\n"
+
+    # Agar message bada ho to file me bhej do
+    if len(msg) > 4000:
+        df = pd.DataFrame(list(user_tracking.values()))
+        output = BytesIO()
+        df.to_excel(output, index=False)
+        output.seek(0)
+        await update.message.reply_document(document=output, filename=f"Users_{get_ist().strftime('%d-%b-%Y')}.xlsx", caption=f"Total Users: {len(user_tracking)}")
+    else:
+        await update.message.reply_text(msg, parse_mode="Markdown")
 
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("scan", scan_cmd))
@@ -148,10 +210,11 @@ application.add_handler(CommandHandler("settings", settings_cmd))
 application.add_handler(CommandHandler("export", export_cmd))
 application.add_handler(CommandHandler("auto", auto_cmd))
 application.add_handler(CommandHandler("stop", stop_cmd))
+application.add_handler(CommandHandler("users", users_cmd))
 application.add_handler(CallbackQueryHandler(button_cb))
 
 @app.route('/')
-def home(): return f"Bot Live Direct API {get_ist().strftime('%H:%M IST')}"
+def home(): return f"Bot Live Direct API {get_ist().strftime('%H:%M IST')} | Users: {len(user_tracking)}"
 
 async def auto_loop():
     while True:
