@@ -1,6 +1,5 @@
 python-telegram-bot==20.7
 yfinance==0.2.44
-curl_cffi==0.7.3
 pandas
 Flask
 openpyxl
