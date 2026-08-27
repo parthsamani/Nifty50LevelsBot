@@ -17,7 +17,35 @@ CHANNEL_LINK = "https://t.me/ParthTraderAlertsLive"
 app = Flask(__name__)
 session = cffi_requests.Session(impersonate="chrome110")
 
-FNO = ["RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","TCS.NS","INFY.NS","LT.NS","ITC.NS","BHARTIARTL.NS","BAJFINANCE.NS","MARUTI.NS","M&M.NS","TATAMOTORS.NS","SUNPHARMA.NS","HCLTECH.NS","WIPRO.NS","ADANIENT.NS","ADANIPOWER.NS","ADANIPORTS.NS","TATAPOWER.NS","TATASTEEL.NS","JSWSTEEL.NS","ZOMATO.NS","JIOFIN.NS","HYUNDAI.NS"]
+# FULL 188 FNO + NEW LIST
+FNO = [
+"HDFCBANK.NS","ICICIBANK.NS","SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","INDUSINDBK.NS","FEDERALBNK.NS",
+"BANKBARODA.NS","BANKINDIA.NS","CANBK.NS","PNB.NS","UNIONBANK.NS","MAHABANK.NS","IDFCFIRSTB.NS",
+"AUBANK.NS","BANDHANBNK.NS","RBLBANK.NS","INDIANB.NS","BAJFINANCE.NS","BAJAJFINSV.NS","CHOLAFIN.NS",
+"MUTHOOTFIN.NS","MANAPPURAM.NS","M&MFIN.NS","LICHSGFIN.NS","POONAWALLA.NS","LTF.NS","ABCAPITAL.NS",
+"MOTILALOFS.NS","JIOFIN.NS","SBICARD.NS","HDFCAMC.NS","NAM-INDIA.NS","ANGELONE.NS","BSE.NS","CDSL.NS",
+"MCX.NS","CAMS.NS","KFINTECH.NS","SBILIFE.NS","HDFCLIFE.NS","ICICIPRULI.NS","LICI.NS","TCS.NS",
+"INFY.NS","WIPRO.NS","HCLTECH.NS","LTIM.NS","TECHM.NS","MPHASIS.NS","PERSISTENT.NS","COFORGE.NS",
+"LTTS.NS","MARUTI.NS","M&M.NS","TATAMOTORS.NS","EICHERMOT.NS","BAJAJ-AUTO.NS","HEROMOTOCO.NS",
+"TVSMOTOR.NS","ASHOKLEY.NS","BHARATFORG.NS","MOTHERSON.NS","SONACOMS.NS","EXIDEIND.NS","ENDURANCE.NS",
+"FORCEMOT.NS","APOLLOTYRE.NS","ITC.NS","HINDUNILVR.NS","TITAN.NS","TRENT.NS","DMART.NS","VBL.NS",
+"DABUR.NS","MARICO.NS","TATACONSUM.NS","COLPAL.NS","BRITANNIA.NS","UNITDSPR.NS","GODREJCP.NS",
+"ETERNAL.NS","BHARTIARTL.NS","IDEA.NS","INDUSTOWER.NS","PAYTM.NS","SUNPHARMA.NS","DIVISLAB.NS",
+"CIPLA.NS","DRREDDY.NS","APOLLOHOSP.NS","ZYDUSLIFE.NS","LUPIN.NS","AUROPHARMA.NS","BIOCON.NS",
+"GRANULES.NS","LAURUSLABS.NS","SYNGENE.NS","ABBOTINDIA.NS","ALKEM.NS","TATASTEEL.NS","JSWSTEEL.NS",
+"HINDALCO.NS","JINDALSTEL.NS","VEDL.NS","HINDZINC.NS","HINDCOPPER.NS","NATIONALUM.NS","SAIL.NS",
+"NMDC.NS","COALINDIA.NS","RELIANCE.NS","ONGC.NS","IOC.NS","BPCL.NS","HINDPETRO.NS","OIL.NS",
+"GAIL.NS","PETRONET.NS","IGL.NS","GUJGASLTD.NS","TATAPOWER.NS","NTPC.NS","POWERGRID.NS",
+"JSWENERGY.NS","ADANIGREEN.NS","ADANIPOWER.NS","ADANIENSOL.NS","SUZLON.NS","ADANIENT.NS",
+"ADANIPORTS.NS","LT.NS","SIEMENS.NS","ABB.NS","CGPOWER.NS","BHEL.NS","POLYCAB.NS","HAVELLS.NS",
+"CROMPTON.NS","VOLTAS.NS","DIXON.NS","THERMAX.NS","CUMMINSIND.NS","BEL.NS","HAL.NS","COCHINSHIP.NS",
+"MAZDOCK.NS","RVNL.NS","IRFC.NS","IRCTC.NS","CONCOR.NS","NBCC.NS","NCC.NS","GMRINFRA.NS",
+"ULTRACEMCO.NS","AMBUJACEM.NS","ACC.NS","DALBHARAT.NS","RAMCOCEM.NS","DLF.NS","GODREJPROP.NS",
+"OBEROIRLTY.NS","LODHA.NS","TATACHEM.NS","UPL.NS","SRF.NS","DEEPAKNTR.NS","CHAMBLFERT.NS",
+"COROMANDEL.NS","AARTIIND.NS","PIDILITIND.NS","ATUL.NS","INDIGO.NS","INDHOTEL.NS","POLICYBZR.NS",
+"NYKAA.NS","SAGILITY.NS","ATHERENERG.NS","VMM.NS","KALYANKJIL.NS","IEX.NS","INDIAMART.NS",
+"NAUKRI.NS","TATAELXSI.NS","TATACOMM.NS","JUBLFOOD.NS","ZEEL.NS","GODFRYPHLP.NS"
+]
 
 CHANNEL_FIXED_CFG = {"near": 0.6, "move": 0.8, "sl": 0.7, "target_ratio": 2}
 CHANNEL_AUTO_ENABLED = True
@@ -150,7 +178,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_joined_channel(update.effective_user.id):
         await update.message.reply_text(f"⛔ **Channel Join Karo**\nBot use karne ke liye join karna zaruri hai\n👉 {CHANNEL_LINK}", parse_mode="Markdown")
         return
-    await update.message.reply_text(f"🚀 **PDC Bot - Channel Fixed**\nIST: {get_ist().strftime('%I:%M %p')}\n\n**Channel Fixed:** Near {CHANNEL_FIXED_CFG['near']}% Move {CHANNEL_FIXED_CFG['move']}% SL {CHANNEL_FIXED_CFG['sl']}% TGT 1:{CHANNEL_FIXED_CFG['target_ratio']}\nChannel Auto: {'ON' if CHANNEL_AUTO_ENABLED else 'OFF'}\n\nUser: /scan /debug /settings /auto /stop\nAdmin: /channelon /channeloff /setchannel 0.6 0.8 0.7 2 /users")
+    await update.message.reply_text(f"🚀 **PDC Bot - Channel Fixed**\nIST: {get_ist().strftime('%I:%M %p')}\n\n**Channel Fixed:** Near {CHANNEL_FIXED_CFG['near']}% Move {CHANNEL_FIXED_CFG['move']}% SL {CHANNEL_FIXED_CFG['sl']}% TGT 1:{CHANNEL_FIXED_CFG['target_ratio']}\nChannel Auto: {'ON' if CHANNEL_AUTO_ENABLED else 'OFF'}\n\nUser: /scan /debug /settings /auto /stop\nAdmin: /channelon /channeloff /setchannel 0.6 0.8 0.7 2 /users\n\nTotal Stocks: {len(FNO)} (188)")
 
 async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
@@ -215,7 +243,7 @@ async def auto_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_joined_channel(update.effective_user.id):
         await update.message.reply_text(f"⛔ **Channel Join Karo**\n👉 {CHANNEL_LINK}"); return
     auto_users.add(update.effective_chat.id)
-    await update.message.reply_text(f"✅ Auto ON\nChannel: {CHANNEL_FIXED_CFG} Auto:{'ON' if CHANNEL_AUTO_ENABLED else 'OFF'}")
+    await update.message.reply_text(f"✅ Auto ON\nChannel: {CHANNEL_FIXED_CFG} Auto:{'ON' if CHANNEL_AUTO_ENABLED else 'OFF'}\nScanning {len(FNO)} stocks")
 
 async def stop_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     track_user(update)
@@ -228,7 +256,7 @@ async def channel_on_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ADMIN_ID!= 0 and update.effective_user.id!= ADMIN_ID:
         await update.message.reply_text("⛔ Admin only"); return
     CHANNEL_AUTO_ENABLED = True
-    await update.message.reply_text(f"✅ Channel Auto ON\nFixed: {CHANNEL_FIXED_CFG}")
+    await update.message.reply_text(f"✅ Channel Auto ON\nFixed: {CHANNEL_FIXED_CFG} Stocks:{len(FNO)}")
 
 async def channel_off_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global CHANNEL_AUTO_ENABLED
@@ -258,7 +286,7 @@ async def users_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ADMIN_ID!= 0 and update.effective_user.id!= ADMIN_ID:
         await update.message.reply_text("⛔ Admin only"); return
     if not user_tracking: await update.message.reply_text("No users"); return
-    msg = f"👥 Total: {len(user_tracking)} AutoON:{len(auto_users)} ChannelAuto:{CHANNEL_AUTO_ENABLED} {CHANNEL_FIXED_CFG}\n"
+    msg = f"👥 Total: {len(user_tracking)} AutoON:{len(auto_users)} ChannelAuto:{CHANNEL_AUTO_ENABLED} {CHANNEL_FIXED_CFG} Stocks:{len(FNO)}\n"
     for i, (uid, data) in enumerate(list(user_tracking.items())[-20:], 1):
         msg += f"{i}. {data['name']} {data['username']} {data['last_seen']}\n"
     await update.message.reply_text(msg)
@@ -278,12 +306,12 @@ application.add_handler(CommandHandler("setchannel", set_channel_cmd))
 application.add_handler(CallbackQueryHandler(button_cb))
 
 @app.route('/')
-def home(): return f"Bot Live {CHANNEL_FIXED_CFG} Auto:{CHANNEL_AUTO_ENABLED} Users:{len(user_tracking)} {get_ist().strftime('%H:%M IST')}"
+def home(): return f"Bot Live {CHANNEL_FIXED_CFG} Auto:{CHANNEL_AUTO_ENABLED} Users:{len(user_tracking)} Stocks:{len(FNO)} {get_ist().strftime('%H:%M IST')}"
 
 @app.route('/users')
 def users_page():
     if not user_tracking: return "No users yet"
-    html = f"<h2>Total: {len(user_tracking)} Channel {CHANNEL_FIXED_CFG} Auto {CHANNEL_AUTO_ENABLED}</h2><table border=1><tr><th>#</th><th>Name</th><th>User</th><th>ID</th><th>Last Seen</th></tr>"
+    html = f"<h2>Total: {len(user_tracking)} Channel {CHANNEL_FIXED_CFG} Auto {CHANNEL_AUTO_ENABLED} Stocks {len(FNO)}</h2><table border=1><tr><th>#</th><th>Name</th><th>User</th><th>ID</th><th>Last Seen</th></tr>"
     for i, (uid, d) in enumerate(user_tracking.items(), 1):
         html += f"<tr><td>{i}</td><td>{d['name']}</td><td>{d['username']}</td><td>{d['user_id']}</td><td>{d['last_seen']}</td></tr>"
     html += "</table>"; return html
